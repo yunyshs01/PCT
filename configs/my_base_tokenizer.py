@@ -7,7 +7,7 @@ default_scope = 'mmpose'
 
 # runtime
 max_epochs = 50
-base_lr = 1e-2
+base_lr = 1e-3
 
 train_cfg = dict(max_epochs=max_epochs, val_interval=1)
 randomness = dict(seed=21)
