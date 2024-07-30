@@ -195,27 +195,26 @@ class ClipAlign(BaseModel):
             gt = [d.gt_instances.get("transformed_keypoints", None) for d in data_samples]
             gt = np.stack(gt)
             gt = torch.from_numpy(gt).float().view(B, K, 2).to(img.device)
-            
-            with torch.no_grad():
-                joint_tokens = self.tokenizer.start_embed(gt)
-                joint_tokens = self.tokenizer.encoder(joint_tokens)
-                joint_tokens = self.tokenizer.token_mlp(joint_tokens)
-                joint_tokens = self.tokenizer.feature_embed(joint_tokens)
-                _,_,gt_indicies,_ = self.tokenizer.decoder(joint_tokens.view(-1, self.token_dim))
                 
-                indicies = indicies.sort(dim = -1)
-                gt_indicies = gt_indicies.sort(dim = -1)
-                cls_acc = indicies.eq(gt_indicies).mean(-1).mean(0)
-                losses.update(cls_acc = cls_acc)
-                
-            
             visible  = [d.gt_instances.get("keypoints_visible", None) for d in data_samples]
             visible = np.stack(visible)
             visible = torch.from_numpy(visible > 0.5).float().view(B, K, 1).to(img.device)
             
             gt = torch.cat([gt,visible],dim = -1)
-            kpt_loss = self.kpt_loss(out, gt)
             
+            with torch.no_grad():
+                _, gt_indicies, _ = self.tokenizer(gt)
+                
+                indicies = indicies.view(B, self.token_num)
+                gt_indicies = gt_indicies.view(B, self.token_num)
+                
+                cls_acc = indicies.eq(gt_indicies).float().mean(1).mean(0).detach().cpu()
+                
+                
+                losses.update(cls_acc = cls_acc)
+
+            
+            kpt_loss = self.kpt_loss(out, gt)
             losses.update(kpt_l1_loss=kpt_loss)
             
             return losses
