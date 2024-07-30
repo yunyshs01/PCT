@@ -161,17 +161,17 @@ def main():
     if 'preprocess_cfg' in cfg:
         cfg.model.setdefault('data_preprocessor', cfg.get('preprocess_cfg', {}))
 
-    model = build_pose_estimator(cfg.model)
+    # model = build_pose_estimator(cfg.model)
 
-    #### ???
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
+    # #### ???
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # model.to(device)
 
 
     # build the runner from config
     runner = Runner.from_cfg(cfg)
 
-    runner.model = model
+    # runner.model = model
 
     # start training
     runner.train()

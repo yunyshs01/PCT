@@ -1,4 +1,4 @@
-_base_ = ['./default_runtime.py', './ap10k.py']
+_base_ = ['./default_runtime.py','./coco.py']
 
 
 scope = 'mmpose'
@@ -11,51 +11,45 @@ base_lr = 1e-2
 
 train_cfg = dict(max_epochs=max_epochs, val_interval=5)
 randomness = dict(seed=21)
-
-
 log_level = 'INFO'
 load_from = None
-resume_from = None
-dist_params = dict(backend='nccl')
-workflow = [('train', 1)]
+
 find_unused_parameters=False
 checkpoint_config = dict(interval=5, create_symlink=False)
 evaluation = dict(interval=5, metric='mAP', save_best='AP')
 
-# learning policy
-lr_config = dict(
-    policy='CosineAnnealing',
-    warmup='linear',
-    warmup_iters=500,
-    warmup_ratio=0.001,
-    min_lr_ratio=1e-5)
-# total_epochs = 50
+custom_hooks = [
+    # Synchronize model buffers such as running_mean and running_var in BN
+    # at the end of each epoch
+    dict(type='SyncBuffersHook'),
+    # dict(type= "ProfilerHook",
+    #      activity_with_cuda = True,
+    #      on_trace_ready = dict(type = "tb_trace"),
+    #      )
+    
+]
 
 # optimizer
 optim_wrapper = dict(
     type='OptimWrapper',
     optimizer=dict(type='AdamW', lr=base_lr, weight_decay=0.05),
     # paramwise_cfg=dict(
-    #     norm_decay_mult=0, bias_decay_mult=0, bypass_duplicate=True)
+    #     norm_decay_mult=0, bias_decay_mult=0, bypass_duplicate=True),
     )
 
 # learning rate
 param_scheduler = [
-    # dict(
-    #     type='LinearLR',
-    #     start_factor=1.0e-5,
-    #     by_epoch=False,
-    #     begin=0,
-    #     end=30),
+    dict(
+        type='LinearLR',
+        start_factor=1.0e-5,
+        by_epoch=False,
+        begin=0,
+        end=100),
     dict(
         type='CosineAnnealingLR',
         eta_min=base_lr * 0.01,
-        # begin=max_epochs // 2,
-        # end=max_epochs,
-        # T_max=max_epochs // 2,
         by_epoch=True,
-        # convert_to_iter_based=True
-        ),
+    )
 ]
 
 # codec settings
@@ -67,37 +61,6 @@ codec = dict(
     normalize=True,
     use_dark=False)
 
-log_config = dict(
-    interval=100,
-    hooks=[
-        dict(type='TextLoggerHook'),
-    ])
-
-channel_cfg = dict(
-    num_output_channels=17,
-    dataset_joints=17,
-    dataset_channel=[
-        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-    ],
-    inference_channel=[
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
-    ])
-
-data_cfg = dict(
-    image_size=[256, 256],
-    heatmap_size=[64, 64],
-    num_output_channels=channel_cfg['num_output_channels'],
-    num_joints=channel_cfg['dataset_joints'],
-    dataset_channel=channel_cfg['dataset_channel'],
-    inference_channel=channel_cfg['inference_channel'],
-    soft_nms=False,
-    nms_thr=1.0,
-    oks_thr=0.9,
-    vis_thr=0.2,
-    use_gt_bbox=True,
-    det_bbox_thr=0.0,
-    bbox_file=None,
-)
 
 # model settings
 model = dict(
@@ -139,8 +102,8 @@ model = dict(
         type='Tokenizer',
         stage_pct='tokenizer',
         in_channels=1024,
-        image_size=data_cfg['image_size'],
-        num_joints=channel_cfg['num_output_channels'],
+        image_size=codec['input_size'],
+        num_joints=17,
         # loss_keypoint=dict(
         #     type='Classifer_loss',
         #     token_loss=1.0,
@@ -186,13 +149,13 @@ model = dict(
             )),
     test_cfg=dict(
         flip_test=False,
-        dataset_name='AP10K'))
+        dataset_name='COCO'))
 
 
 # base dataset settings
-dataset_type = 'AP10KDataset'
+dataset_type = 'CocoDataset'
 data_mode = 'topdown'
-data_root = 'data/ap10k/'
+data_root = 'data/coco/'
 
 backend_args = dict(backend='local')
 
@@ -203,7 +166,7 @@ train_pipeline = [
 
     dict(type='GetBBoxCenterScale'),
     dict(type='RandomFlip', direction='horizontal'),
-    # dict(type='RandomHalfBody'),
+    dict(type='RandomHalfBody'),
     dict(
         type='RandomBBoxTransform', scale_factor=[0.6, 1.4], rotate_factor=80),
     dict(
@@ -231,7 +194,7 @@ train_pipeline = [
 
     dict(type='GenerateTarget', encoder=codec),
     dict(
-        type='PackPoseInputsWoImage',
+        type='PackPoseInputs',
         pack_transformed=True
     )
 ]
@@ -255,7 +218,7 @@ test_pipeline = val_pipeline
 
 
 # data loaders
-data_root = 'data/apt36k'
+data_root = 'data/coco/'
 train_dataloader = dict(
     batch_size=1024,
     num_workers=8,
@@ -265,10 +228,10 @@ train_dataloader = dict(
     dataset=dict(
         type=dataset_type, 
         data_root=data_root,
-        ann_file='annotations/train_annotations_1.json',
-        data_prefix=dict(img=''),
+        ann_file='annotations/person_keypoints_train2017.json',
+        data_prefix=dict(img='images/train2017/'),
         pipeline=train_pipeline,
-        metainfo=dict(from_file='configs/ap10k.py')
+        metainfo=dict(from_file='configs/coco.py')
     ))
 
 val_dataloader = dict(
@@ -281,27 +244,27 @@ val_dataloader = dict(
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='annotations/val_annotations_1.json',
-        data_prefix=dict(img=''),
+        ann_file='annotations/person_keypoints_val2017.json',
+        data_prefix=dict(img='images/val2017/'),
         test_mode=True,
         pipeline=val_pipeline,
-        metainfo=dict(from_file='configs/ap10k.py')
+        metainfo=dict(from_file='configs/coco.py')
     ))
 
 test_dataloader = dict(
-    batch_size=32,
-    num_workers=10,
-    persistent_workers=True,
+    batch_size=1024,
+    num_workers=4,
+    # persistent_workers=True,
     drop_last=False,
-    sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
+    # sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='annotations/val_annotations_1.json',
-        data_prefix=dict(img=''),
+        ann_file='annotations/person_keypoints_val2017.json',
+        data_prefix=dict(img='images/val2017/'),
         test_mode=True,
         pipeline=val_pipeline,
-        metainfo=dict(from_file='configs/ap10k.py')
+        metainfo=dict(from_file='configs/coco.py')
     ))
 
 
@@ -310,11 +273,11 @@ test_dataloader = dict(
 val_evaluator = dict(
     type='CocoMetric',
     use_area=True,
-    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+    ann_file=f'{data_root}/annotations/person_keypoints_val2017.json')
 test_evaluator = dict(
     type='CocoMetric',
     use_area=True,
-    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+    ann_file=f'{data_root}/annotations/person_keypoints_val2017.json')
 
 val_cfg = dict()
 test_cfg = dict()

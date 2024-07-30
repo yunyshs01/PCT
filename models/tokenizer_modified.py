@@ -55,8 +55,12 @@ class CodebookDecoder(nn.Module):
         self.ema_w.data.normal_()  
 
 
-    def forward(self, encode_feat, device, bs):
+    def forward(self, encode_feat):
+        
+        #encoder_feat  [B * Nt, D]
 
+        device = encode_feat.device
+        bs = encode_feat.shape[0] // self.token_num
         # need: encode_feat
         # codebook
         distances = torch.sum(encode_feat**2, dim=1, keepdim=True) \
@@ -215,7 +219,7 @@ class Tokenizer(nn.Module):
         
         # decoder & codebook
         part_token_feat, encodings, encoding_indices, recoverd_joints = \
-            self.decoder(encode_feat, device=joints.device, bs=bs)
+            self.decoder(encode_feat)
         # update codebook
         e_latent_loss = self.decoder.codebook_update(
             encodings, encode_feat, part_token_feat) if train else None

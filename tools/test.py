@@ -8,6 +8,7 @@ from mmengine.config import Config, DictAction
 from mmengine.hooks import Hook
 from mmengine.runner import Runner
 
+import models
 
 def parse_args():
     parser = argparse.ArgumentParser(

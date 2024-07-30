@@ -2,39 +2,20 @@ _base_ = ['./default_runtime.py', './ap10k.py']
 
 
 scope = 'mmpose'
-_scope_ = 'mmpose'
-default_scope = 'mmpose'
 
 # runtime
-max_epochs = 50
+max_epochs = 100
 base_lr = 1e-2
 
-train_cfg = dict(max_epochs=max_epochs, val_interval=5)
+train_cfg = dict(max_epochs=max_epochs, val_interval=1)
 randomness = dict(seed=21)
 
-
-log_level = 'INFO'
-load_from = None
-resume_from = None
-dist_params = dict(backend='nccl')
-workflow = [('train', 1)]
-find_unused_parameters=False
-checkpoint_config = dict(interval=5, create_symlink=False)
-evaluation = dict(interval=5, metric='mAP', save_best='AP')
-
-# learning policy
-lr_config = dict(
-    policy='CosineAnnealing',
-    warmup='linear',
-    warmup_iters=500,
-    warmup_ratio=0.001,
-    min_lr_ratio=1e-5)
-# total_epochs = 50
 
 # optimizer
 optim_wrapper = dict(
     type='OptimWrapper',
-    optimizer=dict(type='AdamW', lr=base_lr, weight_decay=0.05),
+    optimizer=dict(type='AdamW', lr=base_lr, weight_decay=0.15 ),
+
     # paramwise_cfg=dict(
     #     norm_decay_mult=0, bias_decay_mult=0, bypass_duplicate=True)
     )
@@ -59,13 +40,17 @@ param_scheduler = [
 ]
 
 # codec settings
+
+#Keypoints codec
 codec = dict(
     type='SimCCLabel', 
-    input_size=(256, 256),
+    input_size=(224, 224),
     sigma=(5.66, 5.66),
     simcc_split_ratio=2.0,
     normalize=True,
     use_dark=False)
+
+#Heatmap
 
 log_config = dict(
     interval=100,
@@ -73,90 +58,24 @@ log_config = dict(
         dict(type='TextLoggerHook'),
     ])
 
-channel_cfg = dict(
-    num_output_channels=17,
-    dataset_joints=17,
-    dataset_channel=[
-        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-    ],
-    inference_channel=[
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
-    ])
-
-data_cfg = dict(
-    image_size=[256, 256],
-    heatmap_size=[64, 64],
-    num_output_channels=channel_cfg['num_output_channels'],
-    num_joints=channel_cfg['dataset_joints'],
-    dataset_channel=channel_cfg['dataset_channel'],
-    inference_channel=channel_cfg['inference_channel'],
-    soft_nms=False,
-    nms_thr=1.0,
-    oks_thr=0.9,
-    vis_thr=0.2,
-    use_gt_bbox=True,
-    det_bbox_thr=0.0,
-    bbox_file=None,
-)
 
 # model settings
 model = dict(
-    type='PCT',
+    type='ClipAlign',
     # data preprocessor
     data_preprocessor=dict(
-        _scope_='mmpose',
-        type='PoseDataPreprocessor',
+        type = "ClipPreprocess",
         mean=[0.485, 0.456, 0.406],
         std=[0.229, 0.224, 0.225],
+        dataset_info = {{_base_.dataset_info}},
         bgr_to_rgb=True),
-    # pretrained='weights/simmim/swin_base.pth',
-    # backbone
-    backbone=dict(
-        type='SwinV2TransformerRPE2FC',
-        embed_dim=128,
-        depths=[2, 2, 18, 2],
-        num_heads=[4, 8, 16, 32],
-        window_size=[16, 16, 16, 8],
-        pretrain_window_size=[12, 12, 12, 6],
-        ape=False,
-        drop_path_rate=0.3,
-        patch_norm=True,
-        use_checkpoint=True,
-        rpe_interpolation='geo',
-        use_shift=[True, True, False, False],
-        relative_coords_table_type='norm8_log_bylayer',
-        attn_type='cosine_mh',
-        rpe_output_type='sigmoid',
-        postnorm=True,
-        mlp_type='normal',
-        out_indices=(3,),
-        patch_embed_type='normal',
-        patch_merge_type='normal',
-        strid16=False,
-        frozen_stages=5,
-    ),
-    head=dict(
-        type='Tokenizer',
-        stage_pct='tokenizer',
-        in_channels=1024,
-        image_size=data_cfg['image_size'],
-        num_joints=channel_cfg['num_output_channels'],
-        # loss_keypoint=dict(
-        #     type='Classifer_loss',
-        #     token_loss=1.0,
-        #     joint_loss=1.0),
-        # cls_head=dict(
-        #     conv_num_blocks=2,
-        #     conv_channels=256,
-        #     dilation=1,
-        #     num_blocks=4,
-        #     hidden_dim=64,
-        #     token_inter_dim=64,
-        #     hidden_inter_dim=256,
-        #     dropout=0.0),
+    cfg = dict(
+        num_keypoints = 17,
+        kpt_loss = dict(type = "JointS1Loss",beta = 1.),
+        model_name = "ViT-B/32",
         tokenizer=dict(
             # guide_ratio=0.0,
-            # ckpt="",
+            ckpt="work_dirs/my_base_tokenizer/epoch_50.pth",
             encoder=dict(
                 drop_rate=0.2,
                 num_blocks=4,
@@ -183,10 +102,18 @@ model = dict(
                 joint_loss_w=1.0, 
                 e_loss_w=15.0,
                 beta=0.05,)
-            )),
-    test_cfg=dict(
-        flip_test=False,
-        dataset_name='AP10K'))
+            ),
+        test_cfg = dict(
+            flip_test=False,
+            dataset_name='AP10K')
+        ),
+        
+        
+        
+        
+    )
+    
+
 
 
 # base dataset settings
@@ -195,7 +122,7 @@ data_mode = 'topdown'
 data_root = 'data/ap10k/'
 
 backend_args = dict(backend='local')
-
+find_unused_parameters=True
 
 # pipelines
 train_pipeline = [
@@ -231,7 +158,7 @@ train_pipeline = [
 
     dict(type='GenerateTarget', encoder=codec),
     dict(
-        type='PackPoseInputsWoImage',
+        type='PackPoseInputs',
         pack_transformed=True
     )
 ]
@@ -244,6 +171,7 @@ val_pipeline = [
         type='TopdownAffine', 
         input_size=codec['input_size'], 
         use_udp=True),
+    dict(type='GenerateTarget', encoder=codec),
     dict(
         type='PackPoseInputs',
         pack_transformed=True
@@ -257,8 +185,8 @@ test_pipeline = val_pipeline
 # data loaders
 data_root = 'data/apt36k'
 train_dataloader = dict(
-    batch_size=1024,
-    num_workers=8,
+    batch_size=7,
+    num_workers=3,
     pin_memory = True,
     # persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -289,8 +217,8 @@ val_dataloader = dict(
     ))
 
 test_dataloader = dict(
-    batch_size=32,
-    num_workers=10,
+    batch_size=512,
+    num_workers=8,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),

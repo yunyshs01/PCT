@@ -16,7 +16,8 @@ from mmpose.models.pose_estimators.base import BasePoseEstimator
 from mmengine.model.base_model import BaseModel
 from mmpose.models.data_preprocessors import PoseDataPreprocessor
 
-from .pct_tokenizer import Tokenizer ## PCT tokenizer for STAGE I
+# from .pct_tokenizer import Tokenizer ## PCT tokenizer for STAGE I
+from .tokenizer_modified import Tokenizer
 
 from mmengine.structures import InstanceData, PixelData
 
@@ -65,6 +66,9 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
 
         joints_3d = torch.cat(joints_3d, dim=0).to(DEVICE)
         joints_3d_visible = torch.cat(joints_3d_visible, dim=0).to(DEVICE)
+        
+        # print(joints_3d)
+        # exit()
 
         joints_3d_visible = joints_3d_visible.unsqueeze(-1)
         joints = torch.cat((joints_3d, joints_3d_visible), dim=-1)
@@ -238,7 +242,6 @@ class PCT(BaseModel):  ## BasePoseEstimator 대신 BaseModel 상속
             # exapand instance dimension (17, 2) => (1, 17, 2)
             pred_instances.set_field(np.expand_dims(prediction, axis=0), "keypoints")
             pred_instances.set_field(np.expand_dims(sc, axis=0), "keypoint_scores")
-
             pred_instances.keypoints[..., :2] = \
                 pred_instances.keypoints[..., :2] / input_size * input_scale \
                 + input_center - 0.5 * input_scale
