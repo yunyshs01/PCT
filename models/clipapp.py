@@ -85,6 +85,7 @@ class ClipAlign(BaseModel):
         
         self.token_dim = cfg['tokenizer']['codebook']['token_dim']
         self.token_num = cfg['tokenizer']['codebook']['token_num']
+        self.codebook_num = cfg['tokenizer']['codebook']['token_class_num']
         
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.clip = ClipBackbone(model_name = cfg['model_name'])
@@ -95,7 +96,9 @@ class ClipAlign(BaseModel):
         
         self.num_keypoints = cfg['num_keypoints']
         self.kpt_loss = build_from_cfg(cfg['kpt_loss'], MODELS)
-        self.cls_loss = nn.MSELoss()
+        # self.cls_loss = build_from_cfg(cfg['cls_loss'],MODELS)
+        self.cls_loss = nn.CrossEntropyLoss(reduction = 'mean')
+    
         
         
         
@@ -114,10 +117,10 @@ class ClipAlign(BaseModel):
         self.fc_token = nn.Conv1d(self.TR_IMG,self.token_num,kernel_size=1)
         
         self.mlp = nn.Sequential(
-            nn.Linear(self.dim_feat,self.token_dim),
+            nn.Linear(self.dim_feat,self.dim_feat),
             nn.ReLU(),
             nn.Dropout(0.1),
-            nn.Linear(self.token_dim, self.token_dim)
+            nn.Linear(self.dim_feat, self.codebook_num)
         )
            
         
@@ -183,10 +186,12 @@ class ClipAlign(BaseModel):
         # [B, T, D]
         
         top_feature = self.mlp(top_feature)
-        # [B, T, Dtkn]
+        # [B, T, Ncd]
     
-        _,_,indicies, out = self.tokenizer.decoder(top_feature.view(-1, self.token_dim))
-        out = out[...,:2]
+        
+        out = self._decode_feature(top_feature)
+        
+        
         
         
         if mode == "loss":
@@ -202,20 +207,21 @@ class ClipAlign(BaseModel):
             
             gt = torch.cat([gt,visible],dim = -1)
             
-            with torch.no_grad():
-                _, gt_indicies, _ = self.tokenizer(gt)
-                
-                indicies = indicies.view(B, self.token_num)
-                gt_indicies = gt_indicies.view(B, self.token_num)
-                
-                cls_acc = indicies.eq(gt_indicies).float().mean(1).mean(0).detach().cpu()
-                
-                
-                losses.update(cls_acc = cls_acc)
-
             
+            
+            with torch.no_grad():
+                encodings, gt_indicies, _ = self.tokenizer(gt)
+            
+            cls_loss = self.cls_loss(top_feature,gt_indicies.detach())
             kpt_loss = self.kpt_loss(out, gt)
-            losses.update(kpt_l1_loss=kpt_loss)
+            
+
+            indicies = indicies.view(B, self.token_num)
+            gt_indicies = gt_indicies.view(B, self.token_num)
+            cls_acc = indicies.eq(gt_indicies).float().mean(1).mean(0).detach().cpu()
+            
+            losses.update(cls_acc = cls_acc, cls_loss = cls_loss, kpt_loss = kpt_loss)
+            
             
             return losses
                
@@ -244,8 +250,119 @@ class ClipAlign(BaseModel):
                 del state_dict[key]
             
         self.tokenizer.load_state_dict(state_dict=state_dict,strict=True)
-                
+    
+    def _decode_feature(self, top_features : torch.Tensor):
+        # top_feature : [B, T, Ncd]
         
+        top_features = F.softmax(top_features,dim = -1)
+        top_features = top_features.view(-1, self.codebook_num)
+        
+        with torch.no_grad():
+            
+            part_token_feat = torch.matmul(top_features, self.tokenizer.codebook)
+            # [B, T, Dtkn]
+            
+            decoder = self.tokenizer.decoder
+            
+            part_token_feat = part_token_feat.view(-1, self.token_num, self.token_dim)
+            part_token_feat = part_token_feat.transpose(2,1)
+            part_token_feat = decoder.token_mlp(part_token_feat).transpose(2,1)
+            decode_feat = decoder.decoder_start(part_token_feat)
+            
+            
+            for num_layer in decoder.decoder_layers:
+                decode_feat = num_layer(decode_feat)
+            decode_feat = decoder.layer_norm(decode_feat)
+
+            recoverd_joints = decoder.recover_embed(decode_feat)
+        # [B, K, 2]
+            
+        return recoverd_joints
+            
+        
+        
+    
+    def add_pred_to_datasample(self, batch_pred_instances: InstanceList,
+                               batch_pred_fields: Optional[PixelDataList],
+                               batch_data_samples: SampleList) -> SampleList:
+        """Add predictions into data samples.
+
+        Args:
+            batch_pred_instances (List[InstanceData]): The predicted instances
+                of the input data batch
+            batch_pred_fields (List[PixelData], optional): The predicted
+                fields (e.g. heatmaps) of the input batch
+            batch_data_samples (List[PoseDataSample]): The input data batch
+
+        Returns:
+            List[PoseDataSample]: A list of data samples where the predictions
+            are stored in the ``pred_instances`` field of each data sample.
+        """
+
+        # 임시 스코어
+        sc = np.ones((17, ))
+
+
+        # print(len(batch_pred_instances), len(batch_data_samples))
+        assert len(batch_pred_instances) == len(batch_data_samples)
+        
+        if batch_pred_fields is None:
+            batch_pred_fields = []
+        output_keypoint_indices = self.test_cfg.get('output_keypoint_indices',
+                                                    None)
+
+        #for pred_instances, pred_fields, data_sample in zip_longest(
+        for prediction, pred_fields, data_sample in zip_longest(
+                batch_pred_instances, batch_pred_fields, batch_data_samples):
+
+            gt_instances = data_sample.gt_instances
+
+            # convert keypoint coordinates from input space to image space
+            input_center = data_sample.metainfo['input_center']
+            input_scale = data_sample.metainfo['input_scale']
+            input_size = data_sample.metainfo['input_size']
+
+            ##
+            pred_instances = InstanceData()
+            # exapand instance dimension (17, 2) => (1, 17, 2)
+            pred_instances.set_field(np.expand_dims(prediction, axis=0), "keypoints")
+            pred_instances.set_field(np.expand_dims(sc, axis=0), "keypoint_scores")
+
+            pred_instances.keypoints[..., :2] = \
+                pred_instances.keypoints[..., :2] / input_size * input_scale \
+                + input_center - 0.5 * input_scale
+            
+            if 'keypoints_visible' not in pred_instances:
+                pred_instances.keypoints_visible = \
+                    pred_instances.keypoint_scores
+
+            if output_keypoint_indices is not None:
+                # select output keypoints with given indices
+                num_keypoints = pred_instances.keypoints.shape[1]
+                for key, value in pred_instances.all_items():
+                    if key.startswith('keypoint'):
+                        pred_instances.set_field(
+                            value[:, output_keypoint_indices], key)
+
+
+            # add bbox information into pred_instances
+            pred_instances.bboxes = gt_instances.bboxes
+            pred_instances.bbox_scores = gt_instances.bbox_scores
+
+            data_sample.pred_instances = pred_instances
+
+            if pred_fields is not None:
+                if output_keypoint_indices is not None:
+                    # select output heatmap channels with keypoint indices
+                    # when the number of heatmap channel matches num_keypoints
+                    for key, value in pred_fields.all_items():
+                        if value.shape[0] != num_keypoints:
+                            continue
+                        pred_fields.set_field(value[output_keypoint_indices], key)
+                data_sample.pred_fields = pred_fields
+
+        return batch_data_samples
+    
             
         
         
