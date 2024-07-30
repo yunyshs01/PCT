@@ -188,6 +188,7 @@ class ClipAlign(BaseModel):
         top_feature = self.mlp(top_feature)
         # [B, T, Ncd]
     
+        top_feature = top_feature.view(-1, self.codebook_num)
         
         out = self._decode_feature(top_feature)
         
@@ -210,13 +211,13 @@ class ClipAlign(BaseModel):
             
             
             with torch.no_grad():
-                encodings, gt_indicies, _ = self.tokenizer(gt)
+                _, gt_indicies, _ = self.tokenizer(gt)
             
             cls_loss = self.cls_loss(top_feature,gt_indicies.detach())
             kpt_loss = self.kpt_loss(out, gt)
             
 
-            indicies = indicies.view(B, self.token_num)
+            indicies = top_feature.argmax(dim = -1).view(B, self.token_num)
             gt_indicies = gt_indicies.view(B, self.token_num)
             cls_acc = indicies.eq(gt_indicies).float().mean(1).mean(0).detach().cpu()
             
@@ -251,18 +252,17 @@ class ClipAlign(BaseModel):
             
         self.tokenizer.load_state_dict(state_dict=state_dict,strict=True)
     
-    def _decode_feature(self, top_features : torch.Tensor):
+    def _decode_feature(self, top_feature : torch.Tensor):
         # top_feature : [B, T, Ncd]
         
-        top_features = F.softmax(top_features,dim = -1)
-        top_features = top_features.view(-1, self.codebook_num)
+        top_feature = F.softmax(top_feature,dim = -1)
         
         with torch.no_grad():
+            decoder = self.tokenizer.decoder
             
-            part_token_feat = torch.matmul(top_features, self.tokenizer.codebook)
+            part_token_feat = torch.matmul(top_feature, decoder.codebook)
             # [B, T, Dtkn]
             
-            decoder = self.tokenizer.decoder
             
             part_token_feat = part_token_feat.view(-1, self.token_num, self.token_dim)
             part_token_feat = part_token_feat.transpose(2,1)
