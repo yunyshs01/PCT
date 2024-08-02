@@ -71,6 +71,7 @@ class ClipBackbone(nn.Module):
 class ClipAlign(BaseModel):
     def __init__(self,
                  data_preprocessor = None,
+                 backbone = None,
                  init_cfg = None,
                  cfg = None,
                  ):
@@ -78,9 +79,11 @@ class ClipAlign(BaseModel):
         
         self.test_cfg = cfg['test_cfg']
         self.pct_pretrained = cfg['tokenizer']['ckpt']
+        self.backbone_pretrained = backbone['pretrained']
         
+        self.tokenizer : nn.Module = build_from_cfg(dict(type = "Tokenizer",stage_pct = "classifier", tokenizer=cfg['tokenizer']),MODELS)
+        self.tokenizer.load_state_dict(self._load_strip_state_dict(self.pct_pretrained),strict=True)
         
-        self.tokenizer = build_from_cfg(dict(type = "Tokenizer",stage_pct = "classifier", tokenizer=cfg['tokenizer']),MODELS)
         self._load_tokenizer(self.pct_pretrained)
         
         self.token_dim = cfg['tokenizer']['codebook']['token_dim']
@@ -88,8 +91,14 @@ class ClipAlign(BaseModel):
         self.codebook_num = cfg['tokenizer']['codebook']['token_class_num']
         
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.clip = ClipBackbone(model_name = cfg['model_name'])
+        self.backbone : nn.Module = build_from_cfg(backbone, MODELS)
+        self.backbone.load_state_dict(self._load_strip_state_dict(self.backbone_pretrained),strict=True)
+        
+        
+        self.dim_backbone = 1024
+        
         self.vf_dim = self.clip.model.visual.positional_embedding.data.shape[-1] # 768
+        
         
         
         self.dim_feat = self.clip.model.positional_embedding.data.shape[-1] # 512
@@ -104,7 +113,7 @@ class ClipAlign(BaseModel):
         
         
         self.fc_category = nn.Linear(self.vf_dim, self.dim_feat)
-        self.proj = nn.Linear(self.vf_dim, self.dim_feat, bias=False)
+        self.proj = nn.Linear(self.dim_backbone, self.dim_feat, bias=False)
         
         self.TR_IMG = 49
         
@@ -144,14 +153,14 @@ class ClipAlign(BaseModel):
         #gt_cls [B, 1, 1, Dt] : text feature from dataset category name
         
         
-        vis_feature = self.clip(img).float().view(B, 1, -1, V) 
-        #vis_feature = [B, 1, 1 + 49, D]
+        vis_feature = self.backbone(img)
+        #vis_feature = [B, C, H, W]
         
         # print(gt_kpt.shape)
         # exit()
         
         #[B, 1, 1, Dv], [B, 1, 49, Dv]
-        cls_feature, img_feature = torch.split(vis_feature, [1, self.TR_IMG], dim = 2) 
+        # cls_feature, img_feature = torch.split(vis_feature, [1, self.TR_IMG], dim = 2) 
 
         # cls_feature = self.fc_category(cls_feature)
         #cls_feature [B, 1, 1, Dt]
@@ -161,7 +170,8 @@ class ClipAlign(BaseModel):
         #     mse = self.cls_loss(cls_feature, gt_cls)
         #     losses.update(cls_mse_loss = mse)
         
-        img_feature = self.proj(img_feature).view(B, 1, -1, D)  # [B, 1, 49, D]
+        img_feature = vis_feature.flatten(3,4).permute(0,2,1).contiguous()
+        img_feature = self.proj(img_feature)   # [B, 49, D]
         
         
         # # TODO
@@ -177,7 +187,7 @@ class ClipAlign(BaseModel):
         
         # top_feature : B, K, D
         
-        top_feature = img_feature.squeeze(1)
+        top_feature = img_feature
         
         for block in self.blocks:
             top_feature = block(top_feature)
@@ -240,17 +250,21 @@ class ClipAlign(BaseModel):
 
             return results
         
-    def _load_tokenizer(self,pretrained_path):
+    def _load_strip_state_dict(self,pretrained_path, prefix = "backbone."):
         pt = torch.load(pretrained_path)
         state_dict = pt['state_dict'].copy()
         keys = list(state_dict.keys())
         for key in keys:
-            if key.startswith("tokenizer."):
-                new_key = key.replace("tokenizer.","")
+            if key.startswith(prefix):
+                new_key = key[len(prefix):]
                 state_dict.update({new_key:state_dict[key]})
                 del state_dict[key]
             
-        self.tokenizer.load_state_dict(state_dict=state_dict,strict=True)
+        return state_dict
+    
+    
+    
+    
     
     def _decode_feature(self, top_feature : torch.Tensor):
         # top_feature : [B, T, Ncd]

@@ -69,6 +69,25 @@ model = dict(
         std=[0.229, 0.224, 0.225],
         dataset_info = {{_base_.dataset_info}},
         bgr_to_rgb=True),
+    backbone=dict(
+        type='SwinTransformer',
+        pretrained = "work_dirs/swin/epoch_35.pth",
+        embed_dims=128,
+        depths=[2, 2, 18, 2],
+        num_heads=[4, 8, 16, 32],
+        window_size=7,
+        mlp_ratio=4,
+        qkv_bias=True,
+        qk_scale=None,
+        drop_rate=0.,
+        attn_drop_rate=0.,
+        drop_path_rate=0.3,
+        patch_norm=True,
+        out_indices=(3, ),
+        with_cp=False,
+        convert_weights=True,
+        frozen_stages = 4,
+    ),
     cfg = dict(
         num_keypoints = 17,
         kpt_loss = dict(type = "JointS1Loss",beta = 1.),
@@ -127,56 +146,22 @@ find_unused_parameters=True
 
 # pipelines
 train_pipeline = [
-    dict(type='LoadImage', backend_args=backend_args),
-
+    dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
     dict(type='RandomFlip', direction='horizontal'),
     dict(type='RandomHalfBody'),
-    dict(
-        type='RandomBBoxTransform', scale_factor=[0.6, 1.4], rotate_factor=80),
-    dict(
-        type='TopdownAffine', 
-        input_size=codec['input_size'], 
-        use_udp=True
-        ),
-    dict(type='mmdet.YOLOXHSVRandomAug'),
-    dict(
-        type='Albumentation',
-        transforms=[
-            dict(type='Blur', p=0.1),
-            dict(type='MedianBlur', p=0.1),
-            dict(
-                type='CoarseDropout',
-                max_holes=1,
-                max_height=0.4,
-                max_width=0.4,
-                min_holes=1,
-                min_height=0.2,
-                min_width=0.2,
-                p=1.0),
-        ]),
-
-
+    dict(type='RandomBBoxTransform'),
+    dict(type='TopdownAffine', input_size=codec['input_size']),
     dict(type='GenerateTarget', encoder=codec),
-    dict(
-        type='PackPoseInputs',
-        pack_transformed=True
-    )
+    dict(type='PackPoseInputs')
 ]
 
 
 val_pipeline = [
-    dict(type='LoadImage', backend_args=backend_args),
+    dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
-    dict(
-        type='TopdownAffine', 
-        input_size=codec['input_size'], 
-        use_udp=True),
-    dict(type='GenerateTarget', encoder=codec),
-    dict(
-        type='PackPoseInputs',
-        pack_transformed=True
-    )
+    dict(type='TopdownAffine', input_size=codec['input_size']),
+    dict(type='PackPoseInputs')
 ]
 
 test_pipeline = val_pipeline
@@ -186,7 +171,7 @@ test_pipeline = val_pipeline
 # data loaders
 data_root = 'data/apt36k'
 train_dataloader = dict(
-    batch_size=1024,
+    batch_size=16,
     num_workers=8,
     pin_memory = True,
     # persistent_workers=True,
@@ -201,7 +186,7 @@ train_dataloader = dict(
     ))
 
 val_dataloader = dict(
-    batch_size=1024,
+    batch_size=16,
     num_workers=8,
     pin_memory = True,
     # persistent_workers=True,
