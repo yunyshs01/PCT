@@ -7,7 +7,7 @@ default_scope = 'mmpose'
 
 # runtime
 max_epochs = 50
-base_lr = 1e-2
+base_lr = 5e-3
 
 train_cfg = dict(max_epochs=max_epochs, val_interval=5)
 randomness = dict(seed=21)
@@ -15,21 +15,9 @@ randomness = dict(seed=21)
 
 log_level = 'INFO'
 load_from = None
-resume_from = None
-dist_params = dict(backend='nccl')
-workflow = [('train', 1)]
-find_unused_parameters=False
-checkpoint_config = dict(interval=5, create_symlink=False)
-evaluation = dict(interval=5, metric='mAP', save_best='AP')
 
-# learning policy
-lr_config = dict(
-    policy='CosineAnnealing',
-    warmup='linear',
-    warmup_iters=500,
-    warmup_ratio=0.001,
-    min_lr_ratio=1e-5)
-# total_epochs = 50
+find_unused_parameters=False
+evaluation = dict(interval=5, metric='mAP', save_best='AP')
 
 # optimizer
 optim_wrapper = dict(
@@ -41,23 +29,17 @@ optim_wrapper = dict(
 
 # learning rate
 param_scheduler = [
-    # dict(
-    #     type='LinearLR',
-    #     start_factor=1.0e-5,
-    #     by_epoch=False,
-    #     begin=0,
-    #     end=30),
     dict(
-        type='CosineAnnealingLR',
-        eta_min=base_lr * 0.01,
-        # begin=max_epochs // 2,
-        # end=max_epochs,
-        # T_max=max_epochs // 2,
-        by_epoch=True,
-        # convert_to_iter_based=True
-        ),
+        type='LinearLR', begin=0, end=40, start_factor=0.001,
+        by_epoch=False),  # warm-up
+    dict(
+        type='MultiStepLR',
+        begin=0,
+        end=210,
+        milestones=[170, 200],
+        gamma=0.1,
+        by_epoch=True)
 ]
-
 # codec settings
 codec = dict(
     type='SimCCLabel', 
@@ -66,38 +48,6 @@ codec = dict(
     simcc_split_ratio=2.0,
     normalize=True,
     use_dark=False)
-
-log_config = dict(
-    interval=100,
-    hooks=[
-        dict(type='TextLoggerHook'),
-    ])
-
-channel_cfg = dict(
-    num_output_channels=17,
-    dataset_joints=17,
-    dataset_channel=[
-        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
-    ],
-    inference_channel=[
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
-    ])
-
-data_cfg = dict(
-    image_size=[256, 256],
-    heatmap_size=[64, 64],
-    num_output_channels=channel_cfg['num_output_channels'],
-    num_joints=channel_cfg['dataset_joints'],
-    dataset_channel=channel_cfg['dataset_channel'],
-    inference_channel=channel_cfg['inference_channel'],
-    soft_nms=False,
-    nms_thr=1.0,
-    oks_thr=0.9,
-    vis_thr=0.2,
-    use_gt_bbox=True,
-    det_bbox_thr=0.0,
-    bbox_file=None,
-)
 
 # model settings
 model = dict(
@@ -139,8 +89,8 @@ model = dict(
         type='Tokenizer',
         stage_pct='tokenizer',
         in_channels=1024,
-        image_size=data_cfg['image_size'],
-        num_joints=channel_cfg['num_output_channels'],
+        image_size=codec['input_size'],
+        num_joints=17,
         # loss_keypoint=dict(
         #     type='Classifer_loss',
         #     token_loss=1.0,
@@ -199,58 +149,30 @@ backend_args = dict(backend='local')
 
 # pipelines
 train_pipeline = [
-    dict(type='LoadImage', backend_args=backend_args),
-
+    dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
     dict(type='RandomFlip', direction='horizontal'),
-    # dict(type='RandomHalfBody'),
-    dict(
-        type='RandomBBoxTransform', scale_factor=[0.6, 1.4], rotate_factor=80),
-    dict(
-        type='TopdownAffine', 
-        input_size=codec['input_size'], 
-        use_udp=True
-        ),
-    # dict(type='mmdet.YOLOXHSVRandomAug'),
-    # dict(
-    #     type='Albumentation',
-    #     transforms=[
-    #         dict(type='Blur', p=0.1),
-    #         dict(type='MedianBlur', p=0.1),
-    #         dict(
-    #             type='CoarseDropout',
-    #             max_holes=1,
-    #             max_height=0.4,
-    #             max_width=0.4,
-    #             min_holes=1,
-    #             min_height=0.2,
-    #             min_width=0.2,
-    #             p=1.0),
-    #     ]),
-
-
+    dict(type='RandomHalfBody'),
+    dict(type='RandomBBoxTransform'),
+    dict(type='TopdownAffine', input_size=codec['input_size']),
     dict(type='GenerateTarget', encoder=codec),
-    dict(
-        type='PackPoseInputsWoImage',
-        pack_transformed=True
-    )
+    dict(type='PackPoseInputs',
+         pack_transformed=True,
+         )
 ]
 
 
 val_pipeline = [
-    dict(type='LoadImage', backend_args=backend_args),
+    dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
-    dict(
-        type='TopdownAffine', 
-        input_size=codec['input_size'], 
-        use_udp=True),
-    dict(
-        type='PackPoseInputs',
-        pack_transformed=True
-    )
+    dict(type='TopdownAffine', input_size=codec['input_size']),
+    dict(type='PackPoseInputs',
+         pack_transformed=True,
+         )
 ]
 
 test_pipeline = val_pipeline
+
 
 
 
@@ -260,7 +182,7 @@ train_dataloader = dict(
     batch_size=1024,
     num_workers=8,
     pin_memory = True,
-    # persistent_workers=True,
+    persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     dataset=dict(
         type=dataset_type, 
@@ -275,7 +197,7 @@ val_dataloader = dict(
     batch_size=1024,
     num_workers=8,
     pin_memory = True,
-    # persistent_workers=True,
+    persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
     dataset=dict(
