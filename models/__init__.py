@@ -7,5 +7,6 @@ from .pct_loss import *
 from .formatting import *
 # from .tokenizer_modified import *
 from .clipapp import *
+from .clip_heatmap import *
 
 from mmpose.models.builder import MODELS

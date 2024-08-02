@@ -198,3 +198,4 @@ pyrightconfig.json
 data
 work_dirs/
 .vscode
+pretrained/
