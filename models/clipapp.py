@@ -11,12 +11,13 @@ from mmpose.utils.typing import (ConfigType, InstanceList, OptConfigType,
 from typing import Optional
 
 from mmengine.model.base_model import BaseModel, ImgDataPreprocessor
+from mmpose.models.backbones.base_backbone import BaseBackbone
 from mmengine.registry import MODELS, build_from_cfg
 from mmengine.structures import InstanceData
 
 
 
-import clip
+from transformers import CLIPVisionModel, CLIPVisionConfig
 
 from clip.model import Transformer
 
@@ -25,44 +26,71 @@ from .modules import MixerLayer
 
 
 
-class ClipBackbone(nn.Module):
+# class ClipBackbone(nn.Module):
+#     def __init__(self,
+#                  model_name = None,
+#                  ):
+#         super().__init__()
+        
+#         def save_intermediate_state(module : nn.Module, _, output):
+#             module.register_buffer("output_transformer", output.permute(1,0,2))
+        
+#         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+#         self.model_name = model_name
+#         self.model, _ = clip.load(self.model_name, device = self.device)
+        
+#         self.hook = self.model.visual.transformer.register_forward_hook(save_intermediate_state)
+        
+        
+    
+#     def forward(self, img):
+#         # img [B, 3, H, W]
+#         # print(img.shape)
+#         # exit()
+#         with torch.no_grad():
+#             x = self.model.encode_image(img)
+        
+        
+#         out = self.model.visual.transformer.output_transformer
+#         # out : [B, 1 + 49, D]
+#         return out
+    
+#     def encode_text(self, text_token):
+#         # text_token : List[Tensor]  | Tensor
+        
+#         with torch.no_grad():
+#             out = self.model.encode_text(text_token)
+        
+#         return out
+        
+
+@MODELS.register_module()
+class ClipBackbone(BaseBackbone):
     def __init__(self,
-                 model_name = None,
+                 model_name="openai/clip-vit-base-patch32",
+                 init_cfg=None,
                  ):
-        super().__init__()
+        super().__init__(init_cfg = init_cfg)
         
-        def save_intermediate_state(module : nn.Module, _, output):
-            module.register_buffer("output_transformer", output.permute(1,0,2))
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model_name = model_name
-        self.model, _ = clip.load(self.model_name, device = self.device)
-        
-        self.hook = self.model.visual.transformer.register_forward_hook(save_intermediate_state)
-        
+        self.model = CLIPVisionModel.from_pretrained(model_name).to(device)
+    
+    def forward(self, x):
+        with torch.no_grad():
+            x = self.model(x)['last_hidden_state'][:,1:,:]
+            B,C,D = x.shape
+            for w in (7,14,24):
+                if C == w**2:
+                    x = x.reshape(B, w, w, D )
+                    break
+            else:
+                assert x.shape[1] in (49,196,576), f"x.shape[1] must be in (49,196,576), given {x.shape[1]}"
+            
+            x = x.permute(0,3,1,2).contiguous()
+        return [x]
         
     
-    def forward(self, img):
-        # img [B, 3, H, W]
-        # print(img.shape)
-        # exit()
-        with torch.no_grad():
-            x = self.model.encode_image(img)
-        
-        
-        out = self.model.visual.transformer.output_transformer
-        # out : [B, 1 + 49, D]
-        return out
-    
-    def encode_text(self, text_token):
-        # text_token : List[Tensor]  | Tensor
-        
-        with torch.no_grad():
-            out = self.model.encode_text(text_token)
-        
-        return out
-        
-        
         
         
 
@@ -71,37 +99,39 @@ class ClipBackbone(nn.Module):
 class ClipAlign(BaseModel):
     def __init__(self,
                  data_preprocessor = None,
+                 pretrained = None,
                  backbone = None,
                  init_cfg = None,
                  cfg = None,
                  ):
         super().__init__(data_preprocessor, init_cfg)
         
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        
         self.test_cfg = cfg['test_cfg']
         self.pct_pretrained = cfg['tokenizer']['ckpt']
-        self.backbone_pretrained = backbone['pretrained']
+        self.backbone_pretrained = pretrained
         
         self.tokenizer : nn.Module = build_from_cfg(dict(type = "Tokenizer",stage_pct = "classifier", tokenizer=cfg['tokenizer']),MODELS)
-        self.tokenizer.load_state_dict(self._load_strip_state_dict(self.pct_pretrained),strict=True)
-        
-        self._load_tokenizer(self.pct_pretrained)
+        self.tokenizer.load_state_dict(self._load_strip_state_dict(self.pct_pretrained, prefix="tokenizer."),strict=True)
         
         self.token_dim = cfg['tokenizer']['codebook']['token_dim']
         self.token_num = cfg['tokenizer']['codebook']['token_num']
         self.codebook_num = cfg['tokenizer']['codebook']['token_class_num']
         
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.backbone : nn.Module = build_from_cfg(backbone, MODELS)
-        self.backbone.load_state_dict(self._load_strip_state_dict(self.backbone_pretrained),strict=True)
+        self.backbone.load_state_dict(self._load_strip_state_dict(self.backbone_pretrained, prefix= "backbone."),strict=True)
         
         
         self.dim_backbone = 1024
         
-        self.vf_dim = self.clip.model.visual.positional_embedding.data.shape[-1] # 768
+        # self.vf_dim = self.clip.model.visual.positional_embedding.data.shape[-1] # 768
         
         
         
-        self.dim_feat = self.clip.model.positional_embedding.data.shape[-1] # 512
+        
+        # self.dim_feat = self.clip.model.positional_embedding.data.shape[-1] # 512
+        self.dim_feat = self.token_dim # 512
         
         self.num_keypoints = cfg['num_keypoints']
         self.kpt_loss = build_from_cfg(cfg['kpt_loss'], MODELS)
@@ -112,21 +142,21 @@ class ClipAlign(BaseModel):
         
         
         
-        self.fc_category = nn.Linear(self.vf_dim, self.dim_feat)
-        self.proj = nn.Linear(self.dim_backbone, self.dim_feat, bias=False)
+        # self.fc_category = nn.Linear(self.vf_dim, self.dim_feat)
+        # self.proj = nn.Linear(self.dim_backbone, self.dim_feat, bias=False)
         
         self.TR_IMG = 49
         
         self.blocks = nn.ModuleList([
-            MixerLayer(self.dim_feat,self.dim_feat,self.TR_IMG,self.TR_IMG,0.1) for _ in range(3)
+            MixerLayer(self.dim_backbone,self.dim_feat,self.TR_IMG,self.TR_IMG,0.1) for _ in range(3)
         ])
         
-        self.ln = nn.LayerNorm(self.dim_feat)
+        self.ln = nn.LayerNorm(self.dim_backbone)
         
         self.fc_token = nn.Conv1d(self.TR_IMG,self.token_num,kernel_size=1)
         
         self.mlp = nn.Sequential(
-            nn.Linear(self.dim_feat,self.dim_feat),
+            nn.Linear(self.dim_backbone,self.dim_feat),
             nn.ReLU(),
             nn.Dropout(0.1),
             nn.Linear(self.dim_feat, self.codebook_num)
@@ -138,7 +168,7 @@ class ClipAlign(BaseModel):
         img, kpt_token, cat_token = inputs
         
         B = img.shape[0]
-        V = self.vf_dim
+        # V = self.vf_dim
         D = self.dim_feat
         K = self.num_keypoints
         
@@ -147,13 +177,13 @@ class ClipAlign(BaseModel):
         #cat_token : category tokens [B, L]
         
         
-        gt_kpt = self.clip.encode_text(kpt_token).float().view(1,K,1,D)
+        # gt_kpt = self.clip.encode_text(kpt_token).float().view(1,K,1,D)
         # gt_cls = self.clip.encode_text(cat_token).float().view(B,1,1,D)
         #gt_kpt [1, K, 1, Dt] : keypoint feature from dataset keypoints name
         #gt_cls [B, 1, 1, Dt] : text feature from dataset category name
         
         
-        vis_feature = self.backbone(img)
+        vis_feature = self.backbone(img)[-1]
         #vis_feature = [B, C, H, W]
         
         # print(gt_kpt.shape)
@@ -170,8 +200,8 @@ class ClipAlign(BaseModel):
         #     mse = self.cls_loss(cls_feature, gt_cls)
         #     losses.update(cls_mse_loss = mse)
         
-        img_feature = vis_feature.flatten(3,4).permute(0,2,1).contiguous()
-        img_feature = self.proj(img_feature)   # [B, 49, D]
+        img_feature = vis_feature.flatten(2,3).permute(0,2,1).contiguous()
+        # img_feature = self.proj(img_feature)   # [B, 49, D]
         
         
         # # TODO
@@ -258,7 +288,8 @@ class ClipAlign(BaseModel):
             if key.startswith(prefix):
                 new_key = key[len(prefix):]
                 state_dict.update({new_key:state_dict[key]})
-                del state_dict[key]
+            del state_dict[key]
+            
             
         return state_dict
     
