@@ -120,7 +120,7 @@ class ClipAlign(BaseModel):
         self.codebook_num = cfg['tokenizer']['codebook']['token_class_num']
         
         self.backbone : nn.Module = build_from_cfg(backbone, MODELS)
-        self.backbone.load_state_dict(self._load_strip_state_dict(self.backbone_pretrained, prefix= "backbone."),strict=True)
+        self.backbone.load_state_dict(self._load_strip_state_dict(self.backbone_pretrained, prefix= "backbone."),strict=False)
         
         
         self.dim_backbone = 1024
@@ -165,7 +165,8 @@ class ClipAlign(BaseModel):
         
         
     def forward(self, inputs, data_samples, mode):
-        img, kpt_token, cat_token = inputs
+        # img, kpt_token, cat_token = inputs
+        img = inputs
         
         B = img.shape[0]
         # V = self.vf_dim
@@ -229,6 +230,7 @@ class ClipAlign(BaseModel):
         # [B, T, Ncd]
     
         top_feature = top_feature.view(-1, self.codebook_num)
+        top_feature = F.softmax(top_feature, -1)
         
         out = self._decode_feature(top_feature)
         
@@ -411,60 +413,60 @@ class ClipAlign(BaseModel):
             
         
         
-@MODELS.register_module()
-class ClipPreprocess(ImgDataPreprocessor):
-    def __init__(self,
-                 dataset_info = None,
-                 mean = None,
-                 std = None,
-                 non_blocking = False,
-                 *args,
-                 **kargs
-                 ):
-        super().__init__(mean = mean, std = std, non_blocking=non_blocking, *args, **kargs)
-        self.dataset_info = dataset_info
+# @MODELS.register_module()
+# class ClipPreprocess(ImgDataPreprocessor):
+#     def __init__(self,
+#                  dataset_info = None,
+#                  mean = None,
+#                  std = None,
+#                  non_blocking = False,
+#                  *args,
+#                  **kargs
+#                  ):
+#         super().__init__(mean = mean, std = std, non_blocking=non_blocking, *args, **kargs)
+#         self.dataset_info = dataset_info
         
         
-    def forward(self, data: dict, training: bool = False) -> dict | list:
-        data = super().forward(data)
+#     def forward(self, data: dict, training: bool = False) -> dict | list:
+#         data = super().forward(data)
         
-        # keypoint text features
-        kpt_names = self._get_kpt_names()
-        K = len(kpt_names)        
-        template = "The {} in the photo"
-        prompts = [template.format(kpt) for kpt in kpt_names] # [K,]
-        kpt_token = clip.tokenize(prompts).to(data['inputs'].device)
+#         # keypoint text features
+#         kpt_names = self._get_kpt_names()
+#         K = len(kpt_names)        
+#         template = "The {} in the photo"
+#         prompts = [template.format(kpt) for kpt in kpt_names] # [K,]
+#         kpt_token = clip.tokenize(prompts).to(data['inputs'].device)
         
         
         
-        # category text features
-        if training:
-            category = [d.metainfo.get('category', "object") for d in data['data_samples']] #[B, ]
-            cat_token = clip.tokenize(category).to(data['inputs'].device)
-        else:
-            cat_token = None
+#         # category text features
+#         if training:
+#             category = [d.metainfo.get('category', "object") for d in data['data_samples']] #[B, ]
+#             cat_token = clip.tokenize(category).to(data['inputs'].device)
+#         else:
+#             cat_token = None
         
-        img = data['inputs']
+#         img = data['inputs']
         
-        data['inputs'] =  img, kpt_token, cat_token
+#         data['inputs'] =  img, kpt_token, cat_token
         
-        return data
+#         return data
             
         
         
     
-    def _get_kpt_names(self):
+#     def _get_kpt_names(self):
         
-        kpt_info = self.dataset_info['keypoint_info']
-        names = []
-        for i in range(len(kpt_info)):
-            name = kpt_info[i]['name']
-            name.replace("L_","Left ")
-            name.replace("R_","Right ")
-            name.replace("F_","Front ")
-            name.replace("B_","Back ")
-            names.append(name)
-        return names
+#         kpt_info = self.dataset_info['keypoint_info']
+#         names = []
+#         for i in range(len(kpt_info)):
+#             name = kpt_info[i]['name']
+#             name.replace("L_","Left ")
+#             name.replace("R_","Right ")
+#             name.replace("F_","Front ")
+#             name.replace("B_","Back ")
+#             names.append(name)
+#         return names
             
         
         

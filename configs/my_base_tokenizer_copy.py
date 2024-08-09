@@ -7,7 +7,7 @@ default_scope = 'mmpose'
 
 # runtime
 max_epochs = 50
-base_lr = 5e-3
+base_lr = 1e-2
 
 train_cfg = dict(max_epochs=max_epochs, val_interval=5)
 randomness = dict(seed=21)
@@ -15,8 +15,9 @@ randomness = dict(seed=21)
 
 log_level = 'INFO'
 load_from = None
-
+dist_params = dict(backend='nccl')
 find_unused_parameters=False
+checkpoint_config = dict(interval=5, create_symlink=False)
 evaluation = dict(interval=5, metric='mAP', save_best='AP')
 
 # optimizer
@@ -29,17 +30,23 @@ optim_wrapper = dict(
 
 # learning rate
 param_scheduler = [
+    # dict(
+    #     type='LinearLR',
+    #     start_factor=1.0e-5,
+    #     by_epoch=False,
+    #     begin=0,
+    #     end=30),
     dict(
-        type='LinearLR', begin=0, end=40, start_factor=0.001,
-        by_epoch=False),  # warm-up
-    dict(
-        type='MultiStepLR',
-        begin=0,
-        end=210,
-        milestones=[170, 200],
-        gamma=0.1,
-        by_epoch=True)
+        type='CosineAnnealingLR',
+        eta_min=base_lr * 0.01,
+        # begin=max_epochs // 2,
+        # end=max_epochs,
+        # T_max=max_epochs // 2,
+        by_epoch=True,
+        # convert_to_iter_based=True
+        ),
 ]
+
 # codec settings
 codec = dict(
     type='SimCCLabel', 
@@ -48,6 +55,12 @@ codec = dict(
     simcc_split_ratio=2.0,
     normalize=True,
     use_dark=False)
+
+log_config = dict(
+    interval=100,
+    hooks=[
+        dict(type='TextLoggerHook'),
+    ])
 
 # model settings
 model = dict(
@@ -142,7 +155,6 @@ model = dict(
 # base dataset settings
 dataset_type = 'AP10KDataset'
 data_mode = 'topdown'
-data_root = 'data/ap10k/'
 
 backend_args = dict(backend='local')
 
@@ -155,9 +167,9 @@ train_pipeline = [
     dict(type='RandomHalfBody'),
     dict(type='RandomBBoxTransform'),
     dict(type='TopdownAffine', input_size=codec['input_size']),
-    dict(type='GenerateTarget', encoder=codec),
+    # dict(type='GenerateTarget', encoder=codec),
     dict(type='PackPoseInputs',
-         pack_transformed=True,
+         pack_transformed = True,
          )
 ]
 
@@ -167,7 +179,7 @@ val_pipeline = [
     dict(type='GetBBoxCenterScale'),
     dict(type='TopdownAffine', input_size=codec['input_size']),
     dict(type='PackPoseInputs',
-         pack_transformed=True,
+         pack_transformed = True,
          )
 ]
 
@@ -177,50 +189,50 @@ test_pipeline = val_pipeline
 
 
 # data loaders
-data_root = 'data/apt36k'
+data_root = 'data/aptv2'
 train_dataloader = dict(
-    batch_size=1024,
+    batch_size=512,
     num_workers=8,
     pin_memory = True,
-    persistent_workers=True,
+    # persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     dataset=dict(
         type=dataset_type, 
         data_root=data_root,
-        ann_file='annotations/train_annotations_1.json',
-        data_prefix=dict(img=''),
+        ann_file='annotations/train_annotations.json',
+        data_prefix=dict(img='data/'),
         pipeline=train_pipeline,
         metainfo=dict(from_file='configs/ap10k.py')
     ))
 
 val_dataloader = dict(
-    batch_size=1024,
+    batch_size=512,
     num_workers=8,
     pin_memory = True,
-    persistent_workers=True,
+    # persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='annotations/val_annotations_1.json',
-        data_prefix=dict(img=''),
+        ann_file='annotations/val_annotations.json',
+        data_prefix=dict(img='data/'),
         test_mode=True,
         pipeline=val_pipeline,
         metainfo=dict(from_file='configs/ap10k.py')
     ))
 
 test_dataloader = dict(
-    batch_size=32,
-    num_workers=10,
+    batch_size=64,
+    num_workers=8,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='annotations/val_annotations_1.json',
-        data_prefix=dict(img=''),
+        ann_file='annotations/val_annotations.json',
+        data_prefix=dict(img='data/'),
         test_mode=True,
         pipeline=val_pipeline,
         metainfo=dict(from_file='configs/ap10k.py')
@@ -232,11 +244,20 @@ test_dataloader = dict(
 val_evaluator = dict(
     type='CocoMetric',
     use_area=True,
-    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+    ann_file=f'{data_root}/annotations/val_annotations.json')
 test_evaluator = dict(
     type='CocoMetric',
     use_area=True,
-    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+    ann_file=f'{data_root}/annotations/val_annotations.json')
 
 val_cfg = dict()
 test_cfg = dict()
+work_dir = "work_dirs/tokenizer_aptv2"
+
+vis_backends = [
+    dict(type='LocalVisBackend'),
+    # dict(type='TensorboardVisBackend'),
+    # dict(type='WandbVisBackend'),
+]
+visualizer = dict(
+    type='PoseLocalVisualizer', vis_backends=vis_backends, name='visualizer')

@@ -6,17 +6,12 @@ _scope_ = 'mmpose'
 default_scope = 'mmpose'
 
 # runtime
-max_epochs = 90
+max_epochs = 10
 base_lr = 5e-3
 
-train_cfg = dict(max_epochs=max_epochs, val_interval=5)
+train_cfg = dict(max_epochs=max_epochs, val_interval=1)
 randomness = dict(seed=21)
 
-vis_backends = [
-    dict(type='LocalVisBackend'),
-    dict(type='TensorboardVisBackend'),
-    dict(type='WandbVisBackend')
-]
 
 
 log_level = 'INFO'
@@ -108,7 +103,7 @@ test_pipeline = val_pipeline
 
 
 # data loaders
-data_root = 'data/apt36k'
+data_root = 'data/aptv2'
 train_dataloader = dict(
     batch_size=32,
     num_workers=8,
@@ -118,7 +113,7 @@ train_dataloader = dict(
     dataset=dict(
         type=dataset_type, 
         data_root=data_root,
-        ann_file='annotations/train_annotations_1.json',
+        ann_file='annotations/train_annotations.json',
         data_prefix=dict(img=''),
         pipeline=train_pipeline,
         metainfo=dict(from_file='configs/ap10k.py')
@@ -134,7 +129,7 @@ val_dataloader = dict(
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='annotations/val_annotations_1.json',
+        ann_file='annotations/val_annotations.json',
         data_prefix=dict(img=''),
         test_mode=True,
         pipeline=val_pipeline,
@@ -150,7 +145,7 @@ test_dataloader = dict(
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='annotations/val_annotations_1.json',
+        ann_file='annotations/val_annotations.json',
         data_prefix=dict(img=''),
         test_mode=True,
         pipeline=val_pipeline,
@@ -163,11 +158,20 @@ test_dataloader = dict(
 val_evaluator = dict(
     type='CocoMetric',
     use_area=True,
-    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+    ann_file=f'{data_root}/annotations/val_annotations.json')
 test_evaluator = dict(
     type='CocoMetric',
     use_area=True,
-    ann_file=f'{data_root}/annotations/val_annotations_1.json')
+    ann_file=f'{data_root}/annotations/val_annotations.json')
 
 val_cfg = dict()
 test_cfg = dict()
+
+
+vis_backends = [
+    dict(type='LocalVisBackend'),
+    # dict(type='TensorboardVisBackend'),
+    # dict(type='WandbVisBackend'),
+]
+visualizer = dict(
+    type='PoseLocalVisualizer', vis_backends=vis_backends, name='visualizer')
