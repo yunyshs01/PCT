@@ -199,4 +199,4 @@ data
 work_dirs/
 .vscode
 pretrained/
-weights/
+weights

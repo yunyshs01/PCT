@@ -7,7 +7,7 @@ default_scope = 'mmpose'
 
 # runtime
 max_epochs = 50
-base_lr = 1e-2
+base_lr = 1e-3
 
 train_cfg = dict(max_epochs=max_epochs, val_interval=5)
 randomness = dict(seed=21)
@@ -30,12 +30,12 @@ optim_wrapper = dict(
 
 # learning rate
 param_scheduler = [
-    # dict(
-    #     type='LinearLR',
-    #     start_factor=1.0e-5,
-    #     by_epoch=False,
-    #     begin=0,
-    #     end=30),
+    dict(
+        type='LinearLR',
+        start_factor=1.0e-5,
+        by_epoch=False,
+        begin=0,
+        end=30),
     dict(
         type='CosineAnnealingLR',
         eta_min=base_lr * 0.01,
@@ -119,7 +119,7 @@ model = dict(
         #     dropout=0.0),
         tokenizer=dict(
             # guide_ratio=0.0,
-            # ckpt="",
+            ckpt="",
             encoder=dict(
                 drop_rate=0.2,
                 num_blocks=4,
